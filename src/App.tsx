@@ -4,6 +4,7 @@ import {
   createEffect,
   createMemo,
   createSignal,
+  onCleanup,
   onMount,
 } from "solid-js";
 import "./App.css";
@@ -33,6 +34,8 @@ import {
 } from "./review/utils";
 
 function App() {
+  const AUTO_REFRESH_INTERVAL_MS = 2000;
+
   const [context, setContext] = createSignal<ReviewRequest | null>(null);
   const [files, setFiles] = createSignal<FileDiff[]>([]);
   const [selectedDiff, setSelectedDiff] = createSignal<FileDiff | null>(null);
@@ -56,6 +59,7 @@ function App() {
 
   let diffContainerRef: HTMLDivElement | undefined;
   const lineElementMap = new Map<string, HTMLButtonElement>();
+  let refreshInFlight = false;
 
   const diffRows = createMemo(() => buildDiffRows(selectedDiff()));
 
@@ -228,14 +232,55 @@ function App() {
     }, 30);
   }
 
-  async function loadFileDiff(filePath: string) {
-    const diff = await invoke<FileDiff>("load_file_diff", { filePath });
-    setSelectedDiff(diff);
+  function clearDiffState() {
+    setSelectedDiff(null);
+    setSelection(null);
     setScrollTop(0);
+    lineElementMap.clear();
+
     if (diffContainerRef) {
       diffContainerRef.scrollTop = 0;
     }
+  }
+
+  async function loadFileDiff(
+    filePath: string,
+    options: { resetScroll?: boolean } = {},
+  ) {
+    const resetScroll = options.resetScroll ?? true;
+    const diff = await invoke<FileDiff>("load_file_diff", { filePath });
+    setSelectedDiff(diff);
+
+    if (resetScroll) {
+      setScrollTop(0);
+      if (diffContainerRef) {
+        diffContainerRef.scrollTop = 0;
+      }
+    } else if (diffContainerRef) {
+      setScrollTop(diffContainerRef.scrollTop);
+      setViewportHeight(diffContainerRef.clientHeight);
+    }
+
     lineElementMap.clear();
+  }
+
+  async function syncDiffState() {
+    const fileList = await invoke<FileDiff[]>("get_file_list");
+    setFiles(fileList);
+
+    if (fileList.length === 0) {
+      clearDiffState();
+      return;
+    }
+
+    const currentPath = selectedPath();
+    const nextPath = fileList.some((file) => file.new_path === currentPath)
+      ? currentPath
+      : fileList[0].new_path;
+
+    await loadFileDiff(nextPath, {
+      resetScroll: nextPath !== currentPath || !selectedDiff(),
+    });
   }
 
   async function loadReviewData() {
@@ -244,18 +289,29 @@ function App() {
 
     try {
       const reviewContext = await invoke<ReviewRequest>("get_context");
-      const fileList = await invoke<FileDiff[]>("get_file_list");
 
       setContext(reviewContext);
-      setFiles(fileList);
-
-      if (fileList.length > 0) {
-        await loadFileDiff(fileList[0].new_path);
-      }
+      await syncDiffState();
     } catch (err) {
       setError(String(err));
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function refreshDiffState() {
+    if (refreshInFlight || loading()) {
+      return;
+    }
+
+    refreshInFlight = true;
+    try {
+      await syncDiffState();
+      setError("");
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      refreshInFlight = false;
     }
   }
 
@@ -310,7 +366,14 @@ function App() {
     };
 
     window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
+    const refreshTimer = window.setInterval(() => {
+      void refreshDiffState();
+    }, AUTO_REFRESH_INTERVAL_MS);
+
+    onCleanup(() => {
+      window.removeEventListener("resize", onResize);
+      window.clearInterval(refreshTimer);
+    });
   });
 
   createEffect(() => {

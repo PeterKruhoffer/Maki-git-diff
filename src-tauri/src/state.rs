@@ -69,17 +69,23 @@ impl AppState {
         }
     }
 
+    pub fn refresh_diffs(&mut self) -> Result<()> {
+        let diffs = git::diff::compute_file_diffs(&self.request, &self.repo)?;
+        self.diff_store = Some(DiffStore::new(diffs));
+
+        Ok(())
+    }
+
     pub fn ensure_diffs(&mut self) -> Result<()> {
         if self.diff_store.is_none() {
-            let diffs = git::diff::compute_file_diffs(&self.request, &self.repo)?;
-            self.diff_store = Some(DiffStore::new(diffs));
+            self.refresh_diffs()?;
         }
 
         Ok(())
     }
 
     pub fn file_list(&mut self) -> Result<Vec<FileDiffSummary>> {
-        self.ensure_diffs()?;
+        self.refresh_diffs()?;
 
         let store = self
             .diff_store
