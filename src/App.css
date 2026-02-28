@@ -267,8 +267,9 @@ body {
 
 .review-panel {
   overflow: auto;
-  gap: 8px;
-  grid-template-rows: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
 .review-panel label {
@@ -277,6 +278,14 @@ body {
   font-size: 0.8rem;
   font-weight: 600;
   color: var(--muted);
+}
+
+.guidance-field textarea {
+  min-height: 150px;
+}
+
+.decision-field {
+  margin-top: 4px;
 }
 
 textarea,
@@ -289,21 +298,36 @@ textarea,
 select {
   border: 1px solid var(--border);
   border-radius: 8px;
-  padding: 7px;
   background: var(--surface);
   color: var(--text);
 }
 
+textarea {
+  padding: 7px;
+}
+
+select {
+  min-height: 26px;
+  height: 26px;
+  padding: 4px 7px;
+}
+
+.decision-select {
+  min-height: 26px;
+  height: 26px;
+  padding: 1px 7px;
+}
+
 .comment-builder {
   border-top: 1px solid var(--border);
+  margin-top: 4px;
   padding-top: 8px;
   display: grid;
   gap: 8px;
 }
 
-.feedback-tools {
-  display: grid;
-  gap: 6px;
+.comment-builder > p {
+  margin: 0;
 }
 
 .copy-status {
@@ -359,8 +383,13 @@ select {
 
 .actions {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
+  grid-template-columns: 1fr;
+  gap: 6px;
+}
+
+.compact-button {
+  min-height: 30px;
+  padding: 3px 9px;
 }
 
 button {
@@ -424,5 +453,9 @@ button.secondary {
 
   .diff-panel {
     min-height: 42vh;
+  }
+
+  .actions {
+    grid-template-columns: 1fr;
   }
 }

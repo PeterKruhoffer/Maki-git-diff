@@ -15,7 +15,7 @@ type ReviewDecision =
   | "reject"
   | "ask_question";
 type CommentSide = "old" | "new";
-type CommentSeverity = "critical" | "suggestion" | "nitpick";
+type CommentSeverity = "critical" | "suggestion" | "nitpick" | "question";
 type FileStatus =
   | "Added"
   | "Deleted"
@@ -124,8 +124,6 @@ function App() {
 
   const [decision, setDecision] = createSignal<ReviewDecision>("request_changes");
   const [generalFeedback, setGeneralFeedback] = createSignal("");
-  const [suggestedPrompt, setSuggestedPrompt] = createSignal("");
-  const [question, setQuestion] = createSignal("");
 
   const [comments, setComments] = createSignal<LineComment[]>([]);
   const [selection, setSelection] = createSignal<LineSelection | null>(null);
@@ -323,13 +321,13 @@ function App() {
   function formatDecision(value: ReviewDecision) {
     switch (value) {
       case "approve":
-        return "Approve";
+        return "Nitpick";
       case "request_changes":
-        return "Request changes";
+        return "Suggestion";
       case "reject":
-        return "Reject";
+        return "Critical";
       case "ask_question":
-        return "Ask question";
+        return "Question";
       default:
         return value;
     }
@@ -408,15 +406,18 @@ function App() {
   function buildFeedbackExport() {
     const reviewContext = context();
     const now = new Date().toISOString();
+    const trimmedFeedback = generalFeedback().trim();
+    const currentDecision = decision();
 
     const currentDraft: ReviewResponse = {
       session_id: reviewContext?.session_id ?? "unspecified",
       timestamp: now,
-      decision: decision(),
-      general_feedback: generalFeedback().trim(),
+      decision: currentDecision,
+      general_feedback: trimmedFeedback,
       line_comments: comments(),
-      suggested_prompt: suggestedPrompt().trim() || undefined,
-      question: question().trim() || undefined,
+      suggested_prompt: undefined,
+      question:
+        currentDecision === "ask_question" ? trimmedFeedback || undefined : undefined,
       cancelled: undefined,
       review_duration_ms: 0,
     };
@@ -575,16 +576,18 @@ function App() {
     setError("");
 
     try {
+      const trimmedFeedback = generalFeedback().trim();
+      const currentDecision = decision();
+
       const payload: ReviewResponse = {
         session_id: currentContext.session_id,
         timestamp: new Date().toISOString(),
-        decision: decision(),
-        general_feedback: generalFeedback().trim(),
+        decision: currentDecision,
+        general_feedback: trimmedFeedback,
         line_comments: comments(),
-        suggested_prompt:
-          decision() === "reject" ? suggestedPrompt().trim() || undefined : undefined,
+        suggested_prompt: undefined,
         question:
-          decision() === "ask_question" ? question().trim() || undefined : undefined,
+          currentDecision === "ask_question" ? trimmedFeedback || undefined : undefined,
         review_duration_ms: 0,
       };
 
@@ -782,68 +785,35 @@ function App() {
           <aside class="review-panel">
             <h2>Review</h2>
 
-            <label>
+            <label class="guidance-field">
+              General agent guidance
+              <textarea
+                rows={5}
+                value={generalFeedback()}
+                onInput={(event) => setGeneralFeedback(event.currentTarget.value)}
+                placeholder={
+                  decision() === "ask_question"
+                    ? "Blocking question for the agent"
+                    : "High-level guidance for the agent"
+                }
+              />
+            </label>
+
+            <label class="decision-field">
               Decision
               <select
+                class="decision-select"
                 value={decision()}
                 onInput={(event) =>
                   setDecision(event.currentTarget.value as ReviewDecision)
                 }
               >
-                <option value="approve">Approve</option>
-                <option value="request_changes">Request changes</option>
-                <option value="reject">Reject</option>
-                <option value="ask_question">Ask question</option>
+                <option value="request_changes">Suggestion</option>
+                <option value="approve">Nitpick</option>
+                <option value="reject">Critical</option>
+                <option value="ask_question">Question</option>
               </select>
             </label>
-
-            <label>
-              General feedback
-              <textarea
-                rows={5}
-                value={generalFeedback()}
-                onInput={(event) => setGeneralFeedback(event.currentTarget.value)}
-                placeholder="High-level guidance for the agent"
-              />
-            </label>
-
-            <div class="feedback-tools">
-              <button type="button" class="secondary" onClick={() => void copyAllFeedback()}>
-                Copy all feedback
-              </button>
-              <Show when={copyStatus()}>
-                {(statusMessage) => (
-                  <p
-                    class="copy-status"
-                    classList={{ error: statusMessage().startsWith("Unable") }}
-                  >
-                    {statusMessage()}
-                  </p>
-                )}
-              </Show>
-            </div>
-
-            <Show when={decision() === "reject"}>
-              <label>
-                Suggested replacement prompt
-                <textarea
-                  rows={4}
-                  value={suggestedPrompt()}
-                  onInput={(event) => setSuggestedPrompt(event.currentTarget.value)}
-                />
-              </label>
-            </Show>
-
-            <Show when={decision() === "ask_question"}>
-              <label>
-                Blocking question
-                <textarea
-                  rows={3}
-                  value={question()}
-                  onInput={(event) => setQuestion(event.currentTarget.value)}
-                />
-              </label>
-            </Show>
 
             <section class="comment-builder">
               <h3>Line comments</h3>
@@ -866,9 +836,10 @@ function App() {
                           )
                         }
                       >
-                        <option value="critical">Critical</option>
                         <option value="suggestion">Suggestion</option>
                         <option value="nitpick">Nitpick</option>
+                        <option value="critical">Critical</option>
+                        <option value="question">Question</option>
                       </select>
                     </label>
                     <label>
@@ -912,18 +883,40 @@ function App() {
             </section>
 
             <div class="actions">
-              <button type="button" class="secondary" onClick={() => void cancelReview()}>
+              <button
+                type="button"
+                class="secondary compact-button"
+                onClick={() => void copyAllFeedback()}
+              >
+                Copy to clipboard
+              </button>
+              <button
+                type="button"
+                class="secondary compact-button"
+                onClick={() => void cancelReview()}
+              >
                 Cancel
               </button>
               <button
                 type="button"
-                class="primary"
+                class="primary compact-button"
                 disabled={submitting()}
                 onClick={() => void submitReview()}
               >
                 {submitting() ? "Submitting..." : "Submit Review"}
               </button>
             </div>
+
+            <Show when={copyStatus()}>
+              {(statusMessage) => (
+                <p
+                  class="copy-status"
+                  classList={{ error: statusMessage().startsWith("Unable") }}
+                >
+                  {statusMessage()}
+                </p>
+              )}
+            </Show>
 
             <Show when={error()}>
               {(message) => <p class="error">{message()}</p>}

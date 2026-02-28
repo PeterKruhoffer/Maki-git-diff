@@ -66,6 +66,7 @@ pub enum CommentSeverity {
     Critical,
     Suggestion,
     Nitpick,
+    Question,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
