@@ -1,6 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
 import {
-  For,
   Show,
   createEffect,
   createMemo,
@@ -8,118 +7,36 @@ import {
   onMount,
 } from "solid-js";
 import "./App.css";
-
-type ReviewDecision =
-  | "approve"
-  | "request_changes"
-  | "reject"
-  | "ask_question";
-type CommentSide = "old" | "new";
-type CommentSeverity = "critical" | "suggestion" | "nitpick" | "question";
-type FileStatus =
-  | "Added"
-  | "Deleted"
-  | "Modified"
-  | "Renamed"
-  | "Copied"
-  | "TypeChange";
-type HunkLineKind = "context" | "add" | "del";
-
-interface ReviewRequest {
-  session_id: string;
-  timestamp: string;
-  agent_prompt: string;
-  agent_notes?: string;
-  repo_path: string;
-  base_ref: string;
-  head_ref?: string;
-  iteration: number;
-  previous_feedback?: ReviewResponse[];
-}
-
-interface HunkLine {
-  kind: HunkLineKind;
-  old_line?: number;
-  new_line?: number;
-  text: string;
-}
-
-interface Hunk {
-  header: string;
-  lines: HunkLine[];
-}
-
-interface FileDiff {
-  old_path?: string;
-  new_path: string;
-  status: FileStatus;
-  additions: number;
-  deletions: number;
-  is_binary: boolean;
-  hunks?: Hunk[];
-}
-
-interface LineComment {
-  id: string;
-  file_path: string;
-  side: CommentSide;
-  line_start: number;
-  line_end?: number;
-  severity: CommentSeverity;
-  instruction: string;
-  code_context: string;
-  context_fingerprint: string;
-  hunk_header?: string;
-}
-
-interface ReviewResponse {
-  session_id: string;
-  timestamp: string;
-  decision: ReviewDecision;
-  general_feedback: string;
-  line_comments: LineComment[];
-  suggested_prompt?: string;
-  question?: string;
-  cancelled?: boolean;
-  warnings?: string[];
-  repo_head_before?: string;
-  repo_head_after?: string;
-  review_duration_ms: number;
-}
-
-type DiffRow =
-  | {
-      type: "header";
-      key: string;
-      header: string;
-    }
-  | {
-      type: "line";
-      key: string;
-      filePath: string;
-      hunkHeader: string;
-      kind: HunkLineKind;
-      oldLine?: number;
-      newLine?: number;
-      text: string;
-    };
-
-interface LineSelection {
-  filePath: string;
-  side: CommentSide;
-  lineStart: number;
-  lineEnd: number;
-  hunkHeader?: string;
-}
-
-const ROW_HEIGHT = 24;
+import { DiffPanel } from "./review/components/DiffPanel";
+import { FileSidebar } from "./review/components/FileSidebar";
+import { ReviewPanel } from "./review/components/ReviewPanel";
+import { TopBar } from "./review/components/TopBar";
+import type {
+  CommentSeverity,
+  DiffLineRow,
+  FileDiff,
+  LineComment,
+  LineSelection,
+  ReviewDecision,
+  ReviewRequest,
+  ReviewResponse,
+} from "./review/types";
+import {
+  ROW_HEIGHT,
+  buildContextSnippet,
+  buildDiffRows,
+  buildFeedbackExport,
+  deriveSelectionTarget,
+  fnv1aHex,
+  lineDomKey,
+  normalizeForHash,
+} from "./review/utils";
 
 function App() {
   const [context, setContext] = createSignal<ReviewRequest | null>(null);
   const [files, setFiles] = createSignal<FileDiff[]>([]);
-  const [selectedPath, setSelectedPath] = createSignal<string>("");
   const [selectedDiff, setSelectedDiff] = createSignal<FileDiff | null>(null);
-  const [error, setError] = createSignal<string>("");
+  const [error, setError] = createSignal("");
   const [loading, setLoading] = createSignal(true);
 
   const [decision, setDecision] = createSignal<ReviewDecision>("request_changes");
@@ -135,39 +52,12 @@ function App() {
 
   const [scrollTop, setScrollTop] = createSignal(0);
   const [viewportHeight, setViewportHeight] = createSignal(420);
+  const selectedPath = createMemo(() => selectedDiff()?.new_path ?? "");
+
   let diffContainerRef: HTMLDivElement | undefined;
-  const lineElementMap = new Map<string, HTMLElement>();
+  const lineElementMap = new Map<string, HTMLButtonElement>();
 
-  const diffRows = createMemo<DiffRow[]>(() => {
-    const diff = selectedDiff();
-    if (!diff || !diff.hunks) {
-      return [];
-    }
-
-    const rows: DiffRow[] = [];
-    for (const hunk of diff.hunks) {
-      rows.push({
-        type: "header",
-        key: `${diff.new_path}:${hunk.header}`,
-        header: hunk.header,
-      });
-
-      hunk.lines.forEach((line, index) => {
-        rows.push({
-          type: "line",
-          key: `${diff.new_path}:${hunk.header}:${index}`,
-          filePath: diff.new_path,
-          hunkHeader: hunk.header,
-          kind: line.kind,
-          oldLine: line.old_line,
-          newLine: line.new_line,
-          text: line.text,
-        });
-      });
-    }
-
-    return rows;
-  });
+  const diffRows = createMemo(() => buildDiffRows(selectedDiff()));
 
   const visibleRange = createMemo(() => {
     const total = diffRows().length;
@@ -189,100 +79,33 @@ function App() {
 
   const visibleRows = createMemo(() => {
     const range = visibleRange();
-    return diffRows().slice(range.start, range.end).map((row, index) => ({
-      row,
-      absoluteIndex: range.start + index,
-    }));
+    return diffRows().slice(range.start, range.end);
   });
 
-  function lineDomKey(filePath: string, side: CommentSide, lineNumber: number) {
-    return `${filePath}:${side}:${lineNumber}`;
+  function resetCommentDraft() {
+    setCommentInstruction("");
+    setCommentSeverity("suggestion");
   }
 
-  function normalizeForHash(value: string) {
-    return value
-      .split(/\r?\n/)
-      .map((line) => line.trim().replace(/\s+/g, " "))
-      .join("\n");
+  function setDiffContainerRef(element: HTMLDivElement) {
+    diffContainerRef = element;
   }
 
-  function fnv1aHex(input: string) {
-    let hash = 0x811c9dc5;
-    for (let i = 0; i < input.length; i += 1) {
-      hash ^= input.charCodeAt(i);
-      hash = Math.imul(hash, 0x01000193);
+  function handleDiffScroll(container: HTMLDivElement) {
+    setScrollTop(container.scrollTop);
+    setViewportHeight(container.clientHeight);
+  }
+
+  function registerLineElement(row: DiffLineRow, element: HTMLButtonElement) {
+    if (row.newLine !== undefined) {
+      lineElementMap.set(lineDomKey(row.filePath, "new", row.newLine), element);
     }
-    return (hash >>> 0).toString(16).padStart(8, "0");
+    if (row.oldLine !== undefined) {
+      lineElementMap.set(lineDomKey(row.filePath, "old", row.oldLine), element);
+    }
   }
 
-  function buildContextSnippet(
-    filePath: string,
-    side: CommentSide,
-    lineStart: number,
-    lineEnd: number,
-  ) {
-    const lines = diffRows()
-      .filter((row): row is Extract<DiffRow, { type: "line" }> => row.type === "line")
-      .filter((row) => row.filePath === filePath)
-      .filter((row) => {
-        const lineNumber = side === "new" ? row.newLine : row.oldLine;
-        return lineNumber !== undefined;
-      });
-
-    const firstIndex = lines.findIndex((row) => {
-      const lineNumber = side === "new" ? row.newLine : row.oldLine;
-      return (lineNumber ?? 0) >= lineStart;
-    });
-
-    if (firstIndex < 0) {
-      return "";
-    }
-
-    let lastIndex = firstIndex;
-    for (let i = firstIndex; i < lines.length; i += 1) {
-      const lineNumber = side === "new" ? lines[i].newLine : lines[i].oldLine;
-      if ((lineNumber ?? 0) <= lineEnd) {
-        lastIndex = i;
-      } else {
-        break;
-      }
-    }
-
-    const from = Math.max(0, firstIndex - 3);
-    const to = Math.min(lines.length - 1, lastIndex + 3);
-    const extracted = lines.slice(from, to + 1);
-
-    return extracted
-      .map((row) => {
-        const lineNumber = side === "new" ? row.newLine : row.oldLine;
-        const safeNumber = (lineNumber ?? 0).toString().padStart(5, " ");
-        return `${safeNumber} ${row.text}`;
-      })
-      .join("\n");
-  }
-
-  function deriveSelectionTarget(
-    row: Extract<DiffRow, { type: "line" }>,
-    preferredSide?: CommentSide,
-  ) {
-    const side: CommentSide =
-      preferredSide ?? (row.newLine !== undefined ? "new" : "old");
-    const lineNumber =
-      side === "new"
-        ? (row.newLine ?? row.oldLine)
-        : (row.oldLine ?? row.newLine);
-
-    if (lineNumber === undefined) {
-      return null;
-    }
-
-    return { side, lineNumber };
-  }
-
-  function handleLineClick(
-    row: Extract<DiffRow, { type: "line" }>,
-    shiftKey: boolean,
-  ) {
+  function handleLineClick(row: DiffLineRow, shiftKey: boolean) {
     const current = selection();
     const target = deriveSelectionTarget(row, current?.side);
     if (!target) {
@@ -313,142 +136,6 @@ function App() {
     });
   }
 
-  function resetCommentDraft() {
-    setCommentInstruction("");
-    setCommentSeverity("suggestion");
-  }
-
-  function formatDecision(value: ReviewDecision) {
-    switch (value) {
-      case "approve":
-        return "Nitpick";
-      case "request_changes":
-        return "Suggestion";
-      case "reject":
-        return "Critical";
-      case "ask_question":
-        return "Question";
-      default:
-        return value;
-    }
-  }
-
-  function formatLineReference(comment: LineComment) {
-    const lineSuffix =
-      comment.line_end && comment.line_end > comment.line_start
-        ? `-${comment.line_end}`
-        : "";
-    return `${comment.file_path}:${comment.line_start}${lineSuffix} (${comment.side})`;
-  }
-
-  function formatMultilineBlock(label: string, value: string) {
-    const trimmed = value.trim();
-    if (!trimmed) {
-      return `${label}\n(none)`;
-    }
-
-    return `${label}\n${trimmed}`;
-  }
-
-  function formatFeedbackEntry(entry: ReviewResponse, title: string) {
-    const lines: string[] = [];
-    const trimmedPrompt = entry.suggested_prompt?.trim();
-    const trimmedQuestion = entry.question?.trim();
-
-    lines.push(title);
-    lines.push(`Timestamp: ${entry.timestamp}`);
-    lines.push(`Decision: ${formatDecision(entry.decision)}`);
-    lines.push(`Cancelled: ${entry.cancelled ? "yes" : "no"}`);
-
-    if (entry.review_duration_ms > 0) {
-      lines.push(`Review duration: ${entry.review_duration_ms}ms`);
-    }
-
-    lines.push("");
-    lines.push(formatMultilineBlock("General feedback:", entry.general_feedback));
-
-    if (trimmedPrompt) {
-      lines.push("");
-      lines.push(formatMultilineBlock("Suggested replacement prompt:", trimmedPrompt));
-    }
-
-    if (trimmedQuestion) {
-      lines.push("");
-      lines.push(formatMultilineBlock("Blocking question:", trimmedQuestion));
-    }
-
-    lines.push("");
-    lines.push(`Line comments (${entry.line_comments.length}):`);
-
-    if (entry.line_comments.length === 0) {
-      lines.push("(none)");
-    } else {
-      entry.line_comments.forEach((comment, index) => {
-        lines.push(
-          `${index + 1}. [${comment.severity}] ${formatLineReference(comment)}`,
-        );
-        lines.push(`Instruction: ${comment.instruction}`);
-        if (comment.code_context.trim()) {
-          lines.push("Code context:");
-          lines.push(comment.code_context);
-        }
-        lines.push("");
-      });
-    }
-
-    if (entry.warnings && entry.warnings.length > 0) {
-      lines.push(`Warnings: ${entry.warnings.join(" | ")}`);
-    }
-
-    return lines.join("\n").trim();
-  }
-
-  function buildFeedbackExport() {
-    const reviewContext = context();
-    const now = new Date().toISOString();
-    const trimmedFeedback = generalFeedback().trim();
-    const currentDecision = decision();
-
-    const currentDraft: ReviewResponse = {
-      session_id: reviewContext?.session_id ?? "unspecified",
-      timestamp: now,
-      decision: currentDecision,
-      general_feedback: trimmedFeedback,
-      line_comments: comments(),
-      suggested_prompt: undefined,
-      question:
-        currentDecision === "ask_question" ? trimmedFeedback || undefined : undefined,
-      cancelled: undefined,
-      review_duration_ms: 0,
-    };
-
-    const sections: string[] = [];
-    sections.push("OpenCode Review Feedback Export");
-    sections.push(`Generated at: ${now}`);
-
-    if (reviewContext) {
-      sections.push(`Session: ${reviewContext.session_id}`);
-      sections.push(`Iteration: ${reviewContext.iteration}`);
-      sections.push(`Repository: ${reviewContext.repo_path}`);
-      sections.push(`Refs: ${reviewContext.base_ref} -> ${reviewContext.head_ref ?? "working tree"}`);
-    }
-
-    const previousFeedback = reviewContext?.previous_feedback ?? [];
-    if (previousFeedback.length > 0) {
-      sections.push("");
-      sections.push(`Previous submitted feedback (${previousFeedback.length}):`);
-      previousFeedback.forEach((entry, index) => {
-        sections.push("");
-        sections.push(formatFeedbackEntry(entry, `Submitted review #${index + 1}`));
-      });
-    }
-
-    sections.push("");
-    sections.push(formatFeedbackEntry(currentDraft, "Current draft (not yet submitted)"));
-
-    return sections.join("\n").trim();
-  }
-
   async function copyTextToClipboard(value: string) {
     if (navigator.clipboard?.writeText) {
       await navigator.clipboard.writeText(value);
@@ -473,7 +160,13 @@ function App() {
 
   async function copyAllFeedback() {
     try {
-      await copyTextToClipboard(buildFeedbackExport());
+      const exportText = buildFeedbackExport({
+        reviewContext: context(),
+        generalFeedback: generalFeedback(),
+        decision: decision(),
+        comments: comments(),
+      });
+      await copyTextToClipboard(exportText);
       setCopyStatus("Copied all review feedback to clipboard.");
     } catch (err) {
       setCopyStatus(`Unable to copy feedback: ${String(err)}`);
@@ -489,6 +182,7 @@ function App() {
     }
 
     const snippet = buildContextSnippet(
+      diffRows(),
       activeSelection.filePath,
       activeSelection.side,
       activeSelection.lineStart,
@@ -535,7 +229,6 @@ function App() {
   }
 
   async function loadFileDiff(filePath: string) {
-    setSelectedPath(filePath);
     const diff = await invoke<FileDiff>("load_file_diff", { filePath });
     setSelectedDiff(diff);
     setScrollTop(0);
@@ -633,299 +326,48 @@ function App() {
 
   return (
     <main class="app-shell">
-      <header class="topbar">
-        <div>
-          <h1>OpenCode Human Review</h1>
-          <Show when={context()}>
-            {(ctx) => (
-              <p>
-                Session {ctx().session_id} · Iteration {ctx().iteration}
-              </p>
-            )}
-          </Show>
-        </div>
-        <div class="repo-meta">
-          <Show when={context()}>
-            {(ctx) => (
-              <>
-                <span>{ctx().base_ref}</span>
-                <span>→</span>
-                <span>{ctx().head_ref ?? "working tree"}</span>
-              </>
-            )}
-          </Show>
-        </div>
-      </header>
+      <TopBar context={context} />
 
       <Show when={!loading()} fallback={<section class="loading">Loading review data...</section>}>
         <section class="workspace">
-          <aside class="file-sidebar">
-            <h2>Files</h2>
-            <div class="file-scroll">
-              <For each={files()}>
-                {(file) => (
-                  <button
-                    type="button"
-                    class={`file-item ${selectedPath() === file.new_path ? "active" : ""}`}
-                    onClick={() => void loadFileDiff(file.new_path)}
-                  >
-                    <div class="file-top">
-                      <span class="status">{file.status}</span>
-                      <span class="file-name">{file.new_path}</span>
-                    </div>
-                    <div class="file-bottom">
-                      <span class="add">+{file.additions}</span>
-                      <span class="del">-{file.deletions}</span>
-                      <Show when={file.is_binary}>
-                        <span class="binary">binary</span>
-                      </Show>
-                    </div>
-                  </button>
-                )}
-              </For>
-            </div>
-          </aside>
+          <FileSidebar
+            files={files}
+            selectedPath={selectedPath}
+            onSelectFile={loadFileDiff}
+          />
 
-          <section class="diff-panel">
-            <Show when={selectedDiff()} fallback={<div class="empty">Select a file to review.</div>}>
-              {(diff) => (
-                <>
-                  <div class="diff-header">
-                    <h2>{diff().new_path}</h2>
-                    <span>
-                      +{diff().additions} / -{diff().deletions}
-                    </span>
-                  </div>
+          <DiffPanel
+            selectedDiff={selectedDiff}
+            selection={selection}
+            visibleRows={visibleRows}
+            visibleTotalHeight={() => visibleRange().totalHeight}
+            visibleOffsetY={() => visibleRange().offsetY}
+            onDiffScroll={handleDiffScroll}
+            setDiffContainerRef={setDiffContainerRef}
+            onLineClick={handleLineClick}
+            registerLineElement={registerLineElement}
+          />
 
-                  <Show when={!diff().is_binary} fallback={<div class="binary-empty">Binary file diff</div>}>
-                    <div
-                      class="diff-scroll"
-                      ref={diffContainerRef}
-                      onScroll={(event) => {
-                        setScrollTop(event.currentTarget.scrollTop);
-                        setViewportHeight(event.currentTarget.clientHeight);
-                      }}
-                    >
-                      <div class="diff-virtual" style={{ height: `${visibleRange().totalHeight}px` }}>
-                        <div
-                          class="diff-window"
-                          style={{ transform: `translateY(${visibleRange().offsetY}px)` }}
-                        >
-                          <For each={visibleRows()}>
-                            {(entry) => {
-                              if (entry.row.type === "header") {
-                                return <div class="hunk-row">{entry.row.header}</div>;
-                              }
-
-                              const lineRow = entry.row;
-                              return (
-                                <button
-                                  type="button"
-                                  class={`line-row ${lineRow.kind}`}
-                                  classList={{
-                                    selected:
-                                      !!selection() &&
-                                      selection()?.filePath === lineRow.filePath &&
-                                      (() => {
-                                        const active = selection();
-                                        if (!active) return false;
-                                        const lineNumber =
-                                          active.side === "new"
-                                            ? lineRow.newLine
-                                            : lineRow.oldLine;
-                                        return (
-                                          lineNumber !== undefined &&
-                                          lineNumber >= active.lineStart &&
-                                          lineNumber <= active.lineEnd
-                                        );
-                                      })(),
-                                  }}
-                                  onClick={(event) =>
-                                    handleLineClick(lineRow, event.shiftKey)
-                                  }
-                                  ref={(element) => {
-                                    if (lineRow.newLine !== undefined) {
-                                      lineElementMap.set(
-                                        lineDomKey(
-                                          lineRow.filePath,
-                                          "new",
-                                          lineRow.newLine,
-                                        ),
-                                        element,
-                                      );
-                                    }
-                                    if (lineRow.oldLine !== undefined) {
-                                      lineElementMap.set(
-                                        lineDomKey(
-                                          lineRow.filePath,
-                                          "old",
-                                          lineRow.oldLine,
-                                        ),
-                                        element,
-                                      );
-                                    }
-                                  }}
-                                >
-                                  <span class="line-no old">{lineRow.oldLine ?? ""}</span>
-                                  <span class="line-no new">{lineRow.newLine ?? ""}</span>
-                                  <span class="line-text">{lineRow.text || " "}</span>
-                                </button>
-                              );
-                            }}
-                          </For>
-                        </div>
-                      </div>
-                    </div>
-                  </Show>
-                </>
-              )}
-            </Show>
-          </section>
-
-          <aside class="review-panel">
-            <h2>Review</h2>
-
-            <label class="guidance-field">
-              General agent guidance
-              <textarea
-                rows={5}
-                value={generalFeedback()}
-                onInput={(event) => setGeneralFeedback(event.currentTarget.value)}
-                placeholder={
-                  decision() === "ask_question"
-                    ? "Blocking question for the agent"
-                    : "High-level guidance for the agent"
-                }
-              />
-            </label>
-
-            <div class="line-review-section">
-              <label class="decision-field">
-                Decision
-                <select
-                  class="decision-select"
-                  value={decision()}
-                  onInput={(event) =>
-                    setDecision(event.currentTarget.value as ReviewDecision)
-                  }
-                >
-                  <option value="request_changes">Suggestion</option>
-                  <option value="approve">Nitpick</option>
-                  <option value="reject">Critical</option>
-                  <option value="ask_question">Question</option>
-                </select>
-              </label>
-
-              <section class="comment-builder">
-                <h3>Line comments</h3>
-                <Show when={selection()} fallback={<p>Select a diff line to comment.</p>}>
-                  {(active) => (
-                    <div class="selection-details">
-                      <p>
-                        {active().filePath} · {active().side} · {active().lineStart}
-                        <Show when={active().lineEnd > active().lineStart}>
-                          {(lineEnd) => <>-{lineEnd()}</>}
-                        </Show>
-                      </p>
-                      <label>
-                        Severity
-                        <select
-                          value={commentSeverity()}
-                          onInput={(event) =>
-                            setCommentSeverity(
-                              event.currentTarget.value as CommentSeverity,
-                            )
-                          }
-                        >
-                          <option value="suggestion">Suggestion</option>
-                          <option value="nitpick">Nitpick</option>
-                          <option value="critical">Critical</option>
-                          <option value="question">Question</option>
-                        </select>
-                      </label>
-                      <label>
-                        Instruction
-                        <textarea
-                          rows={3}
-                          value={commentInstruction()}
-                          onInput={(event) =>
-                            setCommentInstruction(event.currentTarget.value)
-                          }
-                          placeholder="Actionable change request"
-                        />
-                      </label>
-                      <button type="button" class="secondary" onClick={addLineComment}>
-                        Add comment
-                      </button>
-                    </div>
-                  )}
-                </Show>
-
-                <div class="comment-list">
-                  <For each={comments()}>
-                    {(comment) => (
-                      <button
-                        type="button"
-                        class="comment-item"
-                        onClick={() => void jumpToComment(comment)}
-                      >
-                        <strong>{comment.severity}</strong>
-                        <span>
-                          {comment.file_path}:{comment.line_start}
-                          <Show when={comment.line_end}>
-                            {(lineEnd) => <>-{lineEnd()}</>}
-                          </Show>
-                        </span>
-                        <p>{comment.instruction}</p>
-                      </button>
-                    )}
-                  </For>
-                </div>
-              </section>
-
-              <div class="review-footer">
-                <div class="actions">
-                  <button
-                    type="button"
-                    class="secondary compact-button"
-                    onClick={() => void copyAllFeedback()}
-                  >
-                    Copy to clipboard
-                  </button>
-                  <button
-                    type="button"
-                    class="secondary compact-button"
-                    onClick={() => void cancelReview()}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    class="primary compact-button"
-                    disabled={submitting()}
-                    onClick={() => void submitReview()}
-                  >
-                    {submitting() ? "Submitting..." : "Submit Review"}
-                  </button>
-                </div>
-
-                <Show when={copyStatus()}>
-                  {(statusMessage) => (
-                    <p
-                      class="copy-status"
-                      classList={{ error: statusMessage().startsWith("Unable") }}
-                    >
-                      {statusMessage()}
-                    </p>
-                  )}
-                </Show>
-
-                <Show when={error()}>
-                  {(message) => <p class="error">{message()}</p>}
-                </Show>
-              </div>
-            </div>
-          </aside>
+          <ReviewPanel
+            decision={decision}
+            setDecision={setDecision}
+            generalFeedback={generalFeedback}
+            setGeneralFeedback={setGeneralFeedback}
+            selection={selection}
+            commentSeverity={commentSeverity}
+            setCommentSeverity={setCommentSeverity}
+            commentInstruction={commentInstruction}
+            setCommentInstruction={setCommentInstruction}
+            comments={comments}
+            onAddLineComment={addLineComment}
+            onJumpToComment={jumpToComment}
+            submitting={submitting}
+            onCopyAllFeedback={copyAllFeedback}
+            onCancelReview={cancelReview}
+            onSubmitReview={submitReview}
+            copyStatus={copyStatus}
+            error={error}
+          />
         </section>
       </Show>
     </main>
