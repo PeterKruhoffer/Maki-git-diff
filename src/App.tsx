@@ -34,6 +34,7 @@ interface ReviewRequest {
   base_ref: string;
   head_ref?: string;
   iteration: number;
+  previous_feedback?: ReviewResponse[];
 }
 
 interface HunkLine {
@@ -80,6 +81,9 @@ interface ReviewResponse {
   suggested_prompt?: string;
   question?: string;
   cancelled?: boolean;
+  warnings?: string[];
+  repo_head_before?: string;
+  repo_head_after?: string;
   review_duration_ms: number;
 }
 
@@ -129,6 +133,7 @@ function App() {
     createSignal<CommentSeverity>("suggestion");
   const [commentInstruction, setCommentInstruction] = createSignal("");
   const [submitting, setSubmitting] = createSignal(false);
+  const [copyStatus, setCopyStatus] = createSignal("");
 
   const [scrollTop, setScrollTop] = createSignal(0);
   const [viewportHeight, setViewportHeight] = createSignal(420);
@@ -313,6 +318,167 @@ function App() {
   function resetCommentDraft() {
     setCommentInstruction("");
     setCommentSeverity("suggestion");
+  }
+
+  function formatDecision(value: ReviewDecision) {
+    switch (value) {
+      case "approve":
+        return "Approve";
+      case "request_changes":
+        return "Request changes";
+      case "reject":
+        return "Reject";
+      case "ask_question":
+        return "Ask question";
+      default:
+        return value;
+    }
+  }
+
+  function formatLineReference(comment: LineComment) {
+    const lineSuffix =
+      comment.line_end && comment.line_end > comment.line_start
+        ? `-${comment.line_end}`
+        : "";
+    return `${comment.file_path}:${comment.line_start}${lineSuffix} (${comment.side})`;
+  }
+
+  function formatMultilineBlock(label: string, value: string) {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return `${label}\n(none)`;
+    }
+
+    return `${label}\n${trimmed}`;
+  }
+
+  function formatFeedbackEntry(entry: ReviewResponse, title: string) {
+    const lines: string[] = [];
+    const trimmedPrompt = entry.suggested_prompt?.trim();
+    const trimmedQuestion = entry.question?.trim();
+
+    lines.push(title);
+    lines.push(`Timestamp: ${entry.timestamp}`);
+    lines.push(`Decision: ${formatDecision(entry.decision)}`);
+    lines.push(`Cancelled: ${entry.cancelled ? "yes" : "no"}`);
+
+    if (entry.review_duration_ms > 0) {
+      lines.push(`Review duration: ${entry.review_duration_ms}ms`);
+    }
+
+    lines.push("");
+    lines.push(formatMultilineBlock("General feedback:", entry.general_feedback));
+
+    if (trimmedPrompt) {
+      lines.push("");
+      lines.push(formatMultilineBlock("Suggested replacement prompt:", trimmedPrompt));
+    }
+
+    if (trimmedQuestion) {
+      lines.push("");
+      lines.push(formatMultilineBlock("Blocking question:", trimmedQuestion));
+    }
+
+    lines.push("");
+    lines.push(`Line comments (${entry.line_comments.length}):`);
+
+    if (entry.line_comments.length === 0) {
+      lines.push("(none)");
+    } else {
+      entry.line_comments.forEach((comment, index) => {
+        lines.push(
+          `${index + 1}. [${comment.severity}] ${formatLineReference(comment)}`,
+        );
+        lines.push(`Instruction: ${comment.instruction}`);
+        if (comment.code_context.trim()) {
+          lines.push("Code context:");
+          lines.push(comment.code_context);
+        }
+        lines.push("");
+      });
+    }
+
+    if (entry.warnings && entry.warnings.length > 0) {
+      lines.push(`Warnings: ${entry.warnings.join(" | ")}`);
+    }
+
+    return lines.join("\n").trim();
+  }
+
+  function buildFeedbackExport() {
+    const reviewContext = context();
+    const now = new Date().toISOString();
+
+    const currentDraft: ReviewResponse = {
+      session_id: reviewContext?.session_id ?? "unspecified",
+      timestamp: now,
+      decision: decision(),
+      general_feedback: generalFeedback().trim(),
+      line_comments: comments(),
+      suggested_prompt: suggestedPrompt().trim() || undefined,
+      question: question().trim() || undefined,
+      cancelled: undefined,
+      review_duration_ms: 0,
+    };
+
+    const sections: string[] = [];
+    sections.push("OpenCode Review Feedback Export");
+    sections.push(`Generated at: ${now}`);
+
+    if (reviewContext) {
+      sections.push(`Session: ${reviewContext.session_id}`);
+      sections.push(`Iteration: ${reviewContext.iteration}`);
+      sections.push(`Repository: ${reviewContext.repo_path}`);
+      sections.push(`Refs: ${reviewContext.base_ref} -> ${reviewContext.head_ref ?? "working tree"}`);
+    }
+
+    const previousFeedback = reviewContext?.previous_feedback ?? [];
+    if (previousFeedback.length > 0) {
+      sections.push("");
+      sections.push(`Previous submitted feedback (${previousFeedback.length}):`);
+      previousFeedback.forEach((entry, index) => {
+        sections.push("");
+        sections.push(formatFeedbackEntry(entry, `Submitted review #${index + 1}`));
+      });
+    }
+
+    sections.push("");
+    sections.push(formatFeedbackEntry(currentDraft, "Current draft (not yet submitted)"));
+
+    return sections.join("\n").trim();
+  }
+
+  async function copyTextToClipboard(value: string) {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value);
+      return;
+    }
+
+    const textarea = document.createElement("textarea");
+    textarea.value = value;
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+
+    const copied = document.execCommand("copy");
+    document.body.removeChild(textarea);
+
+    if (!copied) {
+      throw new Error("Clipboard API is unavailable.");
+    }
+  }
+
+  async function copyAllFeedback() {
+    try {
+      await copyTextToClipboard(buildFeedbackExport());
+      setCopyStatus("Copied all review feedback to clipboard.");
+    } catch (err) {
+      setCopyStatus(`Unable to copy feedback: ${String(err)}`);
+    }
+
+    window.setTimeout(() => setCopyStatus(""), 3000);
   }
 
   function addLineComment() {
@@ -640,6 +806,22 @@ function App() {
                 placeholder="High-level guidance for the agent"
               />
             </label>
+
+            <div class="feedback-tools">
+              <button type="button" class="secondary" onClick={() => void copyAllFeedback()}>
+                Copy all feedback
+              </button>
+              <Show when={copyStatus()}>
+                {(statusMessage) => (
+                  <p
+                    class="copy-status"
+                    classList={{ error: statusMessage().startsWith("Unable") }}
+                  >
+                    {statusMessage()}
+                  </p>
+                )}
+              </Show>
+            </div>
 
             <Show when={decision() === "reject"}>
               <label>
