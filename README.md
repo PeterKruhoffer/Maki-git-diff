@@ -1,7 +1,13 @@
+# Maki git diff viewer
+Just my experimenting with a code review tool
+
 # Tauri + Solid + Typescript
 
-This template should help get you started developing with Tauri, Solid and Typescript in Vite.
+```bash
+pnpm install
+```
 
-## Recommended IDE Setup
-
-- [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
+To run project:
+```bash
+pnpm tauri dev
+```
