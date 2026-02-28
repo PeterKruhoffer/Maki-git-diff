@@ -1,9 +1,9 @@
-import { For, Show, type Accessor } from "solid-js";
-import type { FileDiff } from "../types";
+import { For, Show } from "solid-js";
+import type { FileDiffSummary } from "../types";
 
 interface FileSidebarProps {
-  files: Accessor<FileDiff[]>;
-  selectedPath: Accessor<string>;
+  files: FileDiffSummary[];
+  selectedPath: string;
   onSelectFile: (filePath: string) => void | Promise<void>;
 }
 
@@ -12,11 +12,11 @@ export function FileSidebar(props: FileSidebarProps) {
     <aside class="file-sidebar">
       <h2>Files</h2>
       <div class="file-scroll">
-        <For each={props.files()}>
+        <For each={props.files}>
           {(file) => (
             <button
               type="button"
-              class={`file-item ${props.selectedPath() === file.new_path ? "active" : ""}`}
+              class={`file-item ${props.selectedPath === file.new_path ? "active" : ""}`}
               onClick={() => void props.onSelectFile(file.new_path)}
             >
               <div class="file-top">

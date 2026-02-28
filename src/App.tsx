@@ -17,6 +17,7 @@ import type {
   CommentSeverity,
   DiffLineRow,
   FileDiff,
+  FileDiffSummary,
   LineComment,
   LineSelection,
   ReviewDecision,
@@ -37,8 +38,70 @@ import {
 function App() {
   const AUTO_REFRESH_INTERVAL_MS = 2000;
 
+  function isSameFileSummary(left: FileDiffSummary, right: FileDiffSummary) {
+    return (
+      left.old_path === right.old_path &&
+      left.new_path === right.new_path &&
+      left.status === right.status &&
+      left.additions === right.additions &&
+      left.deletions === right.deletions &&
+      left.is_binary === right.is_binary
+    );
+  }
+
+  function areFileSummariesEqual(left: FileDiffSummary[], right: FileDiffSummary[]) {
+    if (left.length !== right.length) {
+      return false;
+    }
+
+    for (let index = 0; index < left.length; index += 1) {
+      if (!isSameFileSummary(left[index], right[index])) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  function areFileDiffsEqual(left: FileDiff, right: FileDiff) {
+    if (!isSameFileSummary(left, right)) {
+      return false;
+    }
+
+    const leftHunks = left.hunks ?? [];
+    const rightHunks = right.hunks ?? [];
+    if (leftHunks.length !== rightHunks.length) {
+      return false;
+    }
+
+    for (let hunkIndex = 0; hunkIndex < leftHunks.length; hunkIndex += 1) {
+      const leftHunk = leftHunks[hunkIndex];
+      const rightHunk = rightHunks[hunkIndex];
+
+      if (leftHunk.header !== rightHunk.header || leftHunk.lines.length !== rightHunk.lines.length) {
+        return false;
+      }
+
+      for (let lineIndex = 0; lineIndex < leftHunk.lines.length; lineIndex += 1) {
+        const leftLine = leftHunk.lines[lineIndex];
+        const rightLine = rightHunk.lines[lineIndex];
+
+        if (
+          leftLine.kind !== rightLine.kind ||
+          leftLine.old_line !== rightLine.old_line ||
+          leftLine.new_line !== rightLine.new_line ||
+          leftLine.text !== rightLine.text
+        ) {
+          return false;
+        }
+      }
+    }
+
+    return true;
+  }
+
   const [context, setContext] = createSignal<ReviewRequest | null>(null);
-  const [files, setFiles] = createSignal<FileDiff[]>([]);
+  const [files, setFiles] = createSignal<FileDiffSummary[]>([]);
   const [selectedDiff, setSelectedDiff] = createSignal<FileDiff | null>(null);
   const [error, setError] = createSignal("");
   const [loading, setLoading] = createSignal(true);
@@ -269,6 +332,22 @@ function App() {
   ) {
     const resetScroll = options.resetScroll ?? true;
     const diff = await invoke<FileDiff>("load_file_diff", { filePath });
+    const container = diffContainerRef;
+    const wasNearBottom =
+      !resetScroll &&
+      container !== undefined &&
+      container.scrollHeight - container.clientHeight - container.scrollTop <= ROW_HEIGHT;
+
+    const currentDiff = selectedDiff();
+    if (
+      currentDiff &&
+      currentDiff.new_path === filePath &&
+      !resetScroll &&
+      areFileDiffsEqual(currentDiff, diff)
+    ) {
+      return;
+    }
+
     setSelectedDiff(diff);
 
     if (resetScroll) {
@@ -277,16 +356,36 @@ function App() {
         diffContainerRef.scrollTop = 0;
       }
     } else if (diffContainerRef) {
-      setScrollTop(diffContainerRef.scrollTop);
-      setViewportHeight(diffContainerRef.clientHeight);
+      if (wasNearBottom) {
+        window.requestAnimationFrame(() => {
+          const activeContainer = diffContainerRef;
+          if (!activeContainer) {
+            return;
+          }
+
+          const maxScrollTop = Math.max(
+            0,
+            activeContainer.scrollHeight - activeContainer.clientHeight,
+          );
+          activeContainer.scrollTop = maxScrollTop;
+          setScrollTop(maxScrollTop);
+          setViewportHeight(activeContainer.clientHeight);
+        });
+      } else {
+        setScrollTop(diffContainerRef.scrollTop);
+        setViewportHeight(diffContainerRef.clientHeight);
+      }
     }
 
     lineElementMap.clear();
   }
 
   async function syncDiffState() {
-    const fileList = await invoke<FileDiff[]>("get_file_list");
-    setFiles(fileList);
+    const fileList = await invoke<FileDiffSummary[]>("get_file_list");
+    const fileListChanged = !areFileSummariesEqual(fileList, files());
+    if (fileListChanged) {
+      setFiles(fileList);
+    }
 
     if (fileList.length === 0) {
       clearDiffState();
@@ -297,9 +396,14 @@ function App() {
     const nextPath = fileList.some((file) => file.new_path === currentPath)
       ? currentPath
       : fileList[0].new_path;
+    const resetScroll = nextPath !== currentPath || !selectedDiff();
+
+    if (!resetScroll && !fileListChanged) {
+      return;
+    }
 
     await loadFileDiff(nextPath, {
-      resetScroll: nextPath !== currentPath || !selectedDiff(),
+      resetScroll,
     });
   }
 
@@ -416,8 +520,8 @@ function App() {
       <Show when={!loading()} fallback={<section class="loading">Loading review data...</section>}>
         <section class="workspace">
           <FileSidebar
-            files={files}
-            selectedPath={selectedPath}
+            files={files()}
+            selectedPath={selectedPath()}
             onSelectFile={loadFileDiff}
           />
 

@@ -46,13 +46,16 @@ export interface Hunk {
   lines: HunkLine[];
 }
 
-export interface FileDiff {
+export interface FileDiffSummary {
   old_path?: string;
   new_path: string;
   status: FileStatus;
   additions: number;
   deletions: number;
   is_binary: boolean;
+}
+
+export interface FileDiff extends FileDiffSummary {
   hunks?: Hunk[];
 }
 
