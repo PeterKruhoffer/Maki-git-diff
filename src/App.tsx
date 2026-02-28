@@ -13,6 +13,7 @@ import { FileSidebar } from "./review/components/FileSidebar";
 import { ReviewPanel } from "./review/components/ReviewPanel";
 import { TopBar } from "./review/components/TopBar";
 import type {
+  CommentAnchor,
   CommentSeverity,
   DiffLineRow,
   FileDiff,
@@ -47,6 +48,7 @@ function App() {
 
   const [comments, setComments] = createSignal<LineComment[]>([]);
   const [selection, setSelection] = createSignal<LineSelection | null>(null);
+  const [commentAnchor, setCommentAnchor] = createSignal<CommentAnchor | null>(null);
   const [commentSeverity, setCommentSeverity] =
     createSignal<CommentSeverity>("suggestion");
   const [commentInstruction, setCommentInstruction] = createSignal("");
@@ -120,6 +122,12 @@ function App() {
       return;
     }
 
+    setCommentAnchor({
+      filePath: row.filePath,
+      side: target.side,
+      lineNumber: target.lineNumber,
+    });
+
     if (
       shiftKey &&
       current &&
@@ -142,6 +150,12 @@ function App() {
       lineEnd: target.lineNumber,
       hunkHeader: row.hunkHeader,
     });
+  }
+
+  function dismissLineCommentEditor() {
+    setSelection(null);
+    setCommentAnchor(null);
+    resetCommentDraft();
   }
 
   async function copyTextToClipboard(value: string) {
@@ -221,6 +235,7 @@ function App() {
 
     setComments((existing) => [...existing, lineComment]);
     setSelection(null);
+    setCommentAnchor(null);
     resetCommentDraft();
   }
 
@@ -239,6 +254,7 @@ function App() {
   function clearDiffState() {
     setSelectedDiff(null);
     setSelection(null);
+    setCommentAnchor(null);
     setScrollTop(0);
     lineElementMap.clear();
 
@@ -383,11 +399,13 @@ function App() {
   createEffect(() => {
     const currentSelection = selection();
     if (!currentSelection) {
+      setCommentAnchor(null);
       return;
     }
 
     if (currentSelection.filePath !== selectedPath()) {
       setSelection(null);
+      setCommentAnchor(null);
     }
   });
 
@@ -413,6 +431,13 @@ function App() {
             setDiffContainerRef={setDiffContainerRef}
             onLineClick={handleLineClick}
             registerLineElement={registerLineElement}
+            commentAnchor={commentAnchor}
+            commentSeverity={commentSeverity}
+            setCommentSeverity={setCommentSeverity}
+            commentInstruction={commentInstruction}
+            setCommentInstruction={setCommentInstruction}
+            onAddLineComment={addLineComment}
+            onDismissLineCommentEditor={dismissLineCommentEditor}
           />
 
           <ReviewPanel
@@ -420,13 +445,7 @@ function App() {
             setDecision={setDecision}
             generalFeedback={generalFeedback}
             setGeneralFeedback={setGeneralFeedback}
-            selection={selection}
-            commentSeverity={commentSeverity}
-            setCommentSeverity={setCommentSeverity}
-            commentInstruction={commentInstruction}
-            setCommentInstruction={setCommentInstruction}
             comments={comments}
-            onAddLineComment={addLineComment}
             onJumpToComment={jumpToComment}
             submitting={submitting}
             onCopyAllFeedback={copyAllFeedback}

@@ -110,3 +110,9 @@ export interface LineSelection {
   lineEnd: number;
   hunkHeader?: string;
 }
+
+export interface CommentAnchor {
+  filePath: string;
+  side: CommentSide;
+  lineNumber: number;
+}

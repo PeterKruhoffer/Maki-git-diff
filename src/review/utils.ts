@@ -112,9 +112,19 @@ export function buildContextSnippet(
 }
 
 export function deriveSelectionTarget(row: DiffLineRow, preferredSide?: CommentSide) {
-  const side: CommentSide = preferredSide ?? (row.newLine !== undefined ? "new" : "old");
-  const lineNumber =
-    side === "new" ? (row.newLine ?? row.oldLine) : (row.oldLine ?? row.newLine);
+  const hasNewLine = row.newLine !== undefined;
+  const hasOldLine = row.oldLine !== undefined;
+
+  let side: CommentSide;
+  if (preferredSide === "new" && hasNewLine) {
+    side = "new";
+  } else if (preferredSide === "old" && hasOldLine) {
+    side = "old";
+  } else {
+    side = hasNewLine ? "new" : "old";
+  }
+
+  const lineNumber = side === "new" ? row.newLine : row.oldLine;
 
   if (lineNumber === undefined) {
     return null;

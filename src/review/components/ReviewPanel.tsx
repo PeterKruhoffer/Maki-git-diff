@@ -19,12 +19,6 @@ export function ReviewPanel(props: ReviewPanelProps) {
         <DecisionField decision={props.decision} setDecision={props.setDecision} />
 
         <LineCommentsSection
-          selection={props.selection}
-          commentSeverity={props.commentSeverity}
-          setCommentSeverity={props.setCommentSeverity}
-          commentInstruction={props.commentInstruction}
-          setCommentInstruction={props.setCommentInstruction}
-          onAddLineComment={props.onAddLineComment}
           comments={props.comments}
           onJumpToComment={props.onJumpToComment}
         />
