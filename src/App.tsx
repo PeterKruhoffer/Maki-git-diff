@@ -96,7 +96,11 @@ function App() {
   }
 
   function handleDiffScroll(container: HTMLDivElement) {
-    setScrollTop(container.scrollTop);
+    const totalHeight = diffRows().length * ROW_HEIGHT;
+    const maxScrollTop = Math.max(0, totalHeight - container.clientHeight);
+    const clampedScrollTop = Math.min(Math.max(0, container.scrollTop), maxScrollTop);
+
+    setScrollTop(clampedScrollTop);
     setViewportHeight(container.clientHeight);
   }
 
