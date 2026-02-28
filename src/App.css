@@ -269,7 +269,7 @@ body {
   overflow: auto;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 0;
 }
 
 .review-panel label {
@@ -284,8 +284,19 @@ body {
   min-height: 150px;
 }
 
+.guidance-field {
+  margin-bottom: 0;
+}
+
+.line-review-section {
+  margin-top: auto;
+  display: grid;
+  gap: 10px;
+  padding-top: 18px;
+}
+
 .decision-field {
-  margin-top: 4px;
+  margin-top: 0;
 }
 
 textarea,
@@ -320,7 +331,7 @@ select {
 
 .comment-builder {
   border-top: 1px solid var(--border);
-  margin-top: 4px;
+  margin-top: 0;
   padding-top: 8px;
   display: grid;
   gap: 8px;
@@ -385,6 +396,13 @@ select {
   display: grid;
   grid-template-columns: 1fr;
   gap: 6px;
+}
+
+.review-footer {
+  margin-top: 0;
+  display: grid;
+  gap: 6px;
+  padding-top: 8px;
 }
 
 .compact-button {

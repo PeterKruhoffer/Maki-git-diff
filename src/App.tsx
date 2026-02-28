@@ -799,128 +799,132 @@ function App() {
               />
             </label>
 
-            <label class="decision-field">
-              Decision
-              <select
-                class="decision-select"
-                value={decision()}
-                onInput={(event) =>
-                  setDecision(event.currentTarget.value as ReviewDecision)
-                }
-              >
-                <option value="request_changes">Suggestion</option>
-                <option value="approve">Nitpick</option>
-                <option value="reject">Critical</option>
-                <option value="ask_question">Question</option>
-              </select>
-            </label>
+            <div class="line-review-section">
+              <label class="decision-field">
+                Decision
+                <select
+                  class="decision-select"
+                  value={decision()}
+                  onInput={(event) =>
+                    setDecision(event.currentTarget.value as ReviewDecision)
+                  }
+                >
+                  <option value="request_changes">Suggestion</option>
+                  <option value="approve">Nitpick</option>
+                  <option value="reject">Critical</option>
+                  <option value="ask_question">Question</option>
+                </select>
+              </label>
 
-            <section class="comment-builder">
-              <h3>Line comments</h3>
-              <Show when={selection()} fallback={<p>Select a diff line to comment.</p>}>
-                {(active) => (
-                  <div class="selection-details">
-                    <p>
-                      {active().filePath} · {active().side} · {active().lineStart}
-                      <Show when={active().lineEnd > active().lineStart}>
-                        {(lineEnd) => <>-{lineEnd()}</>}
-                      </Show>
-                    </p>
-                    <label>
-                      Severity
-                      <select
-                        value={commentSeverity()}
-                        onInput={(event) =>
-                          setCommentSeverity(
-                            event.currentTarget.value as CommentSeverity,
-                          )
-                        }
-                      >
-                        <option value="suggestion">Suggestion</option>
-                        <option value="nitpick">Nitpick</option>
-                        <option value="critical">Critical</option>
-                        <option value="question">Question</option>
-                      </select>
-                    </label>
-                    <label>
-                      Instruction
-                      <textarea
-                        rows={3}
-                        value={commentInstruction()}
-                        onInput={(event) =>
-                          setCommentInstruction(event.currentTarget.value)
-                        }
-                        placeholder="Actionable change request"
-                      />
-                    </label>
-                    <button type="button" class="secondary" onClick={addLineComment}>
-                      Add comment
-                    </button>
-                  </div>
-                )}
-              </Show>
-
-              <div class="comment-list">
-                <For each={comments()}>
-                  {(comment) => (
-                    <button
-                      type="button"
-                      class="comment-item"
-                      onClick={() => void jumpToComment(comment)}
-                    >
-                      <strong>{comment.severity}</strong>
-                      <span>
-                        {comment.file_path}:{comment.line_start}
-                        <Show when={comment.line_end}>
+              <section class="comment-builder">
+                <h3>Line comments</h3>
+                <Show when={selection()} fallback={<p>Select a diff line to comment.</p>}>
+                  {(active) => (
+                    <div class="selection-details">
+                      <p>
+                        {active().filePath} · {active().side} · {active().lineStart}
+                        <Show when={active().lineEnd > active().lineStart}>
                           {(lineEnd) => <>-{lineEnd()}</>}
                         </Show>
-                      </span>
-                      <p>{comment.instruction}</p>
-                    </button>
+                      </p>
+                      <label>
+                        Severity
+                        <select
+                          value={commentSeverity()}
+                          onInput={(event) =>
+                            setCommentSeverity(
+                              event.currentTarget.value as CommentSeverity,
+                            )
+                          }
+                        >
+                          <option value="suggestion">Suggestion</option>
+                          <option value="nitpick">Nitpick</option>
+                          <option value="critical">Critical</option>
+                          <option value="question">Question</option>
+                        </select>
+                      </label>
+                      <label>
+                        Instruction
+                        <textarea
+                          rows={3}
+                          value={commentInstruction()}
+                          onInput={(event) =>
+                            setCommentInstruction(event.currentTarget.value)
+                          }
+                          placeholder="Actionable change request"
+                        />
+                      </label>
+                      <button type="button" class="secondary" onClick={addLineComment}>
+                        Add comment
+                      </button>
+                    </div>
                   )}
-                </For>
+                </Show>
+
+                <div class="comment-list">
+                  <For each={comments()}>
+                    {(comment) => (
+                      <button
+                        type="button"
+                        class="comment-item"
+                        onClick={() => void jumpToComment(comment)}
+                      >
+                        <strong>{comment.severity}</strong>
+                        <span>
+                          {comment.file_path}:{comment.line_start}
+                          <Show when={comment.line_end}>
+                            {(lineEnd) => <>-{lineEnd()}</>}
+                          </Show>
+                        </span>
+                        <p>{comment.instruction}</p>
+                      </button>
+                    )}
+                  </For>
+                </div>
+              </section>
+
+              <div class="review-footer">
+                <div class="actions">
+                  <button
+                    type="button"
+                    class="secondary compact-button"
+                    onClick={() => void copyAllFeedback()}
+                  >
+                    Copy to clipboard
+                  </button>
+                  <button
+                    type="button"
+                    class="secondary compact-button"
+                    onClick={() => void cancelReview()}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    class="primary compact-button"
+                    disabled={submitting()}
+                    onClick={() => void submitReview()}
+                  >
+                    {submitting() ? "Submitting..." : "Submit Review"}
+                  </button>
+                </div>
+
+                <Show when={copyStatus()}>
+                  {(statusMessage) => (
+                    <p
+                      class="copy-status"
+                      classList={{ error: statusMessage().startsWith("Unable") }}
+                    >
+                      {statusMessage()}
+                    </p>
+                  )}
+                </Show>
+
+                <Show when={error()}>
+                  {(message) => <p class="error">{message()}</p>}
+                </Show>
               </div>
-            </section>
-
-            <div class="actions">
-              <button
-                type="button"
-                class="secondary compact-button"
-                onClick={() => void copyAllFeedback()}
-              >
-                Copy to clipboard
-              </button>
-              <button
-                type="button"
-                class="secondary compact-button"
-                onClick={() => void cancelReview()}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                class="primary compact-button"
-                disabled={submitting()}
-                onClick={() => void submitReview()}
-              >
-                {submitting() ? "Submitting..." : "Submit Review"}
-              </button>
             </div>
-
-            <Show when={copyStatus()}>
-              {(statusMessage) => (
-                <p
-                  class="copy-status"
-                  classList={{ error: statusMessage().startsWith("Unable") }}
-                >
-                  {statusMessage()}
-                </p>
-              )}
-            </Show>
-
-            <Show when={error()}>
-              {(message) => <p class="error">{message()}</p>}
-            </Show>
           </aside>
         </section>
       </Show>
