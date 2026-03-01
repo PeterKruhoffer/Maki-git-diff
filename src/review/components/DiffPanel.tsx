@@ -111,19 +111,21 @@ export function DiffPanel(props: DiffPanelProps) {
 
                                     <label>
                                       Severity
-                                      <select
-                                        value={props.commentSeverity()}
-                                        onInput={(event) =>
-                                          props.setCommentSeverity(
-                                            event.currentTarget.value as CommentSeverity,
-                                          )
-                                        }
-                                      >
-                                        <option value="suggestion">Suggestion</option>
-                                        <option value="nitpick">Nitpick</option>
-                                        <option value="critical">Critical</option>
-                                        <option value="question">Question</option>
-                                      </select>
+                                      <span class="select-field">
+                                        <select
+                                          value={props.commentSeverity()}
+                                          onInput={(event) =>
+                                            props.setCommentSeverity(
+                                              event.currentTarget.value as CommentSeverity,
+                                            )
+                                          }
+                                        >
+                                          <option value="suggestion">Suggestion</option>
+                                          <option value="nitpick">Nitpick</option>
+                                          <option value="critical">Critical</option>
+                                          <option value="question">Question</option>
+                                        </select>
+                                      </span>
                                     </label>
 
                                     <label>
