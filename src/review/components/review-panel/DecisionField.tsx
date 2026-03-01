@@ -10,7 +10,7 @@ export function DecisionField(props: DecisionFieldProps) {
       <span class="select-field">
         <select
           class="decision-select"
-          value={props.decision()}
+          value={props.decision}
           onInput={(event) => props.setDecision(event.currentTarget.value as ReviewDecision)}
         >
           <option value="request_changes">Suggestion</option>

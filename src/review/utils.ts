@@ -45,14 +45,14 @@ export function lineDomKey(filePath: string, side: CommentSide, lineNumber: numb
   return `${filePath}:${side}:${lineNumber}`;
 }
 
-export function normalizeForHash(value: string) {
+function normalizeForHash(value: string) {
   return value
     .split(/\r?\n/)
     .map((line) => line.trim().replace(/\s+/g, " "))
     .join("\n");
 }
 
-export function fnv1aHex(input: string) {
+function fnv1aHex(input: string) {
   let hash = 0x811c9dc5;
   for (let i = 0; i < input.length; i += 1) {
     const charCode = input.charCodeAt(i);
@@ -62,6 +62,10 @@ export function fnv1aHex(input: string) {
 
   const unsignedHash = hash >>> 0;
   return unsignedHash.toString(16).padStart(8, "0");
+}
+
+export function buildContextFingerprint(snippet: string) {
+  return fnv1aHex(normalizeForHash(snippet));
 }
 
 export function buildContextSnippet(

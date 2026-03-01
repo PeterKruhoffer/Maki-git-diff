@@ -72,6 +72,10 @@ export interface LineComment {
   hunk_header?: string;
 }
 
+export interface DraftLineComment extends LineComment {
+  is_outdated: boolean;
+}
+
 export interface ReviewResponse {
   session_id: string;
   timestamp: string;

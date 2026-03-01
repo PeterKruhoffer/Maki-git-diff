@@ -32,22 +32,22 @@ export function ReviewActions(props: ReviewActionsProps) {
         <button
           type="button"
           class="primary compact-button"
-          disabled={props.submitting()}
+          disabled={props.submitting}
           onClick={() => void props.onSubmitReview()}
         >
-          {props.submitting() ? "Submitting..." : "Submit Review"}
+          {props.submitting ? "Submitting..." : "Submit Review"}
         </button>
       </div>
 
-      <Show when={props.copyStatus()}>
-        {(statusMessage) => (
-          <p class="copy-status" classList={{ error: statusMessage().startsWith("Unable") }}>
-            {statusMessage()}
-          </p>
-        )}
+      <Show when={props.copyStatus}>
+        <p class="copy-status" classList={{ error: props.copyStatus.startsWith("Unable") }}>
+          {props.copyStatus}
+        </p>
       </Show>
 
-      <Show when={props.error()}>{(message) => <p class="error">{message()}</p>}</Show>
+      <Show when={props.error}>
+        <p class="error">{props.error}</p>
+      </Show>
     </div>
   );
 }

@@ -21,6 +21,7 @@ export function ReviewPanel(props: ReviewPanelProps) {
         <LineCommentsSection
           comments={props.comments}
           onJumpToComment={props.onJumpToComment}
+          onResolveComment={props.onResolveComment}
         />
 
         <ReviewActions

@@ -16,6 +16,8 @@ import type {
   CommentAnchor,
   CommentSeverity,
   DiffLineRow,
+  DiffRow,
+  DraftLineComment,
   FileDiff,
   FileDiffSummary,
   LineComment,
@@ -26,13 +28,12 @@ import type {
 } from "./review/types";
 import {
   ROW_HEIGHT,
+  buildContextFingerprint,
   buildContextSnippet,
   buildDiffRows,
   buildFeedbackExport,
   deriveSelectionTarget,
-  fnv1aHex,
   lineDomKey,
-  normalizeForHash,
 } from "./review/utils";
 
 function App() {
@@ -109,7 +110,7 @@ function App() {
   const [decision, setDecision] = createSignal<ReviewDecision>("request_changes");
   const [generalFeedback, setGeneralFeedback] = createSignal("");
 
-  const [comments, setComments] = createSignal<LineComment[]>([]);
+  const [comments, setComments] = createSignal<DraftLineComment[]>([]);
   const [selection, setSelection] = createSignal<LineSelection | null>(null);
   const [commentAnchor, setCommentAnchor] = createSignal<CommentAnchor | null>(null);
   const [commentSeverity, setCommentSeverity] =
@@ -154,6 +155,90 @@ function App() {
   function resetCommentDraft() {
     setCommentInstruction("");
     setCommentSeverity("suggestion");
+  }
+
+  function isCommentOutdated(comment: LineComment, rows: DiffRow[]) {
+    const snippet = buildContextSnippet(
+      rows,
+      comment.file_path,
+      comment.side,
+      comment.line_start,
+      comment.line_end ?? comment.line_start,
+    );
+
+    if (!snippet) {
+      return true;
+    }
+
+    return buildContextFingerprint(snippet) !== comment.context_fingerprint;
+  }
+
+  function updateOutdatedCommentsForFile(
+    sourceComments: DraftLineComment[],
+    filePath: string,
+    rows: DiffRow[],
+  ) {
+    return sourceComments.map((comment) => {
+      if (comment.file_path !== filePath) {
+        return comment;
+      }
+
+      const nextOutdated = isCommentOutdated(comment, rows);
+      if (comment.is_outdated === nextOutdated) {
+        return comment;
+      }
+
+      return {
+        ...comment,
+        is_outdated: nextOutdated,
+      };
+    });
+  }
+
+  function toPayloadComment(comment: DraftLineComment): LineComment {
+    const { is_outdated: _isOutdated, ...payloadComment } = comment;
+    return payloadComment;
+  }
+
+  async function syncCommentOutdatedStates() {
+    const currentComments = comments();
+    if (currentComments.length === 0) {
+      return currentComments;
+    }
+
+    const uniqueFilePaths = Array.from(new Set(currentComments.map((comment) => comment.file_path)));
+    const rowsByPath = new Map<string, DiffRow[]>();
+
+    const loaded: Array<[string, DiffRow[]]> = await Promise.all(
+      uniqueFilePaths.map(async (filePath): Promise<[string, DiffRow[]]> => {
+        try {
+          const diff = await invoke<FileDiff>("load_file_diff", { filePath });
+          return [filePath, buildDiffRows(diff)];
+        } catch {
+          return [filePath, []];
+        }
+      }),
+    );
+
+    loaded.forEach(([filePath, rows]) => {
+      rowsByPath.set(filePath, rows);
+    });
+
+    const syncedComments = currentComments.map((comment) => {
+      const rows = rowsByPath.get(comment.file_path) ?? [];
+      const nextOutdated = isCommentOutdated(comment, rows);
+      if (comment.is_outdated === nextOutdated) {
+        return comment;
+      }
+
+      return {
+        ...comment,
+        is_outdated: nextOutdated,
+      };
+    });
+
+    setComments(syncedComments);
+    return syncedComments;
   }
 
   function setDiffContainerRef(element: HTMLDivElement) {
@@ -222,37 +307,31 @@ function App() {
   }
 
   async function copyTextToClipboard(value: string) {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(value);
-      return;
-    }
-
-    const textarea = document.createElement("textarea");
-    textarea.value = value;
-    textarea.style.position = "fixed";
-    textarea.style.opacity = "0";
-    document.body.appendChild(textarea);
-    textarea.focus();
-    textarea.select();
-
-    const copied = document.execCommand("copy");
-    document.body.removeChild(textarea);
-
-    if (!copied) {
-      throw new Error("Clipboard API is unavailable.");
-    }
+    await invoke("copy_to_clipboard", { value });
   }
 
   async function copyAllFeedback() {
     try {
+      const syncedComments = await syncCommentOutdatedStates();
+      const activeComments = syncedComments
+        .filter((comment) => !comment.is_outdated)
+        .map(toPayloadComment);
+      const outdatedCount = syncedComments.length - activeComments.length;
+
       const exportText = buildFeedbackExport({
         reviewContext: context(),
         generalFeedback: generalFeedback(),
         decision: decision(),
-        comments: comments(),
+        comments: activeComments,
       });
       await copyTextToClipboard(exportText);
-      setCopyStatus("Copied all review feedback to clipboard.");
+      setCopyStatus(
+        outdatedCount > 0
+          ? `Copied review feedback. Excluded ${outdatedCount} outdated comment${
+              outdatedCount === 1 ? "" : "s"
+            }.`
+          : "Copied all review feedback to clipboard.",
+      );
     } catch (err) {
       setCopyStatus(`Unable to copy feedback: ${String(err)}`);
     }
@@ -273,7 +352,7 @@ function App() {
       activeSelection.lineStart,
       activeSelection.lineEnd,
     );
-    const fingerprint = fnv1aHex(normalizeForHash(snippet));
+    const fingerprint = buildContextFingerprint(snippet);
 
     const id =
       typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -296,13 +375,17 @@ function App() {
       hunk_header: activeSelection.hunkHeader,
     };
 
-    setComments((existing) => [...existing, lineComment]);
+    setComments((existing) => [...existing, { ...lineComment, is_outdated: false }]);
     setSelection(null);
     setCommentAnchor(null);
     resetCommentDraft();
   }
 
-  async function jumpToComment(comment: LineComment) {
+  function resolveComment(commentId: string) {
+    setComments((existing) => existing.filter((comment) => comment.id !== commentId));
+  }
+
+  async function jumpToComment(comment: DraftLineComment) {
     if (selectedPath() !== comment.file_path) {
       await loadFileDiff(comment.file_path);
     }
@@ -349,6 +432,7 @@ function App() {
     }
 
     setSelectedDiff(diff);
+    setComments((existing) => updateOutdatedCommentsForFile(existing, filePath, buildDiffRows(diff)));
 
     if (resetScroll) {
       setScrollTop(0);
@@ -397,10 +481,6 @@ function App() {
       ? currentPath
       : fileList[0].new_path;
     const resetScroll = nextPath !== currentPath || !selectedDiff();
-
-    if (!resetScroll && !fileListChanged) {
-      return;
-    }
 
     await loadFileDiff(nextPath, {
       resetScroll,
@@ -451,13 +531,17 @@ function App() {
     try {
       const trimmedFeedback = generalFeedback().trim();
       const currentDecision = decision();
+      const syncedComments = await syncCommentOutdatedStates();
+      const activeComments = syncedComments
+        .filter((comment) => !comment.is_outdated)
+        .map(toPayloadComment);
 
       const payload: ReviewResponse = {
         session_id: currentContext.session_id,
         timestamp: new Date().toISOString(),
         decision: currentDecision,
         general_feedback: trimmedFeedback,
-        line_comments: comments(),
+        line_comments: activeComments,
         suggested_prompt: undefined,
         question:
           currentDecision === "ask_question" ? trimmedFeedback || undefined : undefined,
@@ -545,18 +629,19 @@ function App() {
           />
 
           <ReviewPanel
-            decision={decision}
+            decision={decision()}
             setDecision={setDecision}
-            generalFeedback={generalFeedback}
+            generalFeedback={generalFeedback()}
             setGeneralFeedback={setGeneralFeedback}
-            comments={comments}
+            comments={comments()}
             onJumpToComment={jumpToComment}
-            submitting={submitting}
+            onResolveComment={resolveComment}
+            submitting={submitting()}
             onCopyAllFeedback={copyAllFeedback}
             onCancelReview={cancelReview}
             onSubmitReview={submitReview}
-            copyStatus={copyStatus}
-            error={error}
+            copyStatus={copyStatus()}
+            error={error()}
           />
         </section>
       </Show>

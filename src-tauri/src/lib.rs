@@ -41,6 +41,15 @@ fn load_file_diff(file_path: String, state: State<'_, SharedState>) -> Result<Fi
 }
 
 #[tauri::command]
+fn copy_to_clipboard(value: String) -> Result<(), String> {
+    let mut clipboard =
+        arboard::Clipboard::new().map_err(|err| format!("Unable to access clipboard: {err}"))?;
+    clipboard
+        .set_text(value)
+        .map_err(|err| format!("Unable to write clipboard: {err}"))
+}
+
+#[tauri::command]
 fn submit_review(
     app_handle: tauri::AppHandle,
     response: ReviewResponse,
@@ -221,6 +230,7 @@ pub fn run() {
             get_context,
             get_file_list,
             load_file_diff,
+            copy_to_clipboard,
             submit_review,
             cancel_review
         ])
